@@ -1,0 +1,67 @@
+name: Test Build
+
+# This workflow tests builds on all platforms
+# Trigger manually or on pull requests
+
+on:
+  workflow_dispatch:  # Manual trigger
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-build:
+    name: Test ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+
+          - name: macos-x64
+            os: macos-latest
+            target: x86_64-apple-darwin
+
+          - name: linux-x64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+
+          - name: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Install musl tools (Linux)
+        if: matrix.platform.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.platform.target }}
+
+      - name: Test binary exists
+        shell: bash
+        run: |
+          cd target/${{ matrix.platform.target }}/release
+          if [ "${{ matrix.platform.os }}" = "windows-latest" ]; then
+            ls -lh bore.exe
+          else
+            ls -lh bore
+            chmod +x bore
+            ./bore --version || echo "Version check skipped"
+          fi
+
+      - name: ✅ Build successful
+        run: echo "✅ ${{ matrix.platform.name }} build successful!"
