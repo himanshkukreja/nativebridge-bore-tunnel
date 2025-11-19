@@ -78,7 +78,7 @@ jobs:
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bore-${{ matrix.platform.name }}
           path: bore-0.6.0-nativebridge-${{ matrix.platform.name }}${{ matrix.platform.ext }}
@@ -100,7 +100,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: binaries
 
