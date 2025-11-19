@@ -42,13 +42,21 @@ jobs:
         with:
           targets: ${{ matrix.platform.target }}
 
-      - name: Install musl tools (Linux)
+      - name: Install musl tools and dependencies (Linux)
         if: matrix.platform.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y musl-tools pkg-config libssl-dev
 
-      - name: Build
+      - name: Build (Linux with vendored OpenSSL)
+        if: matrix.platform.os == 'ubuntu-latest'
+        env:
+          OPENSSL_STATIC: 1
+          OPENSSL_VENDORED: 1
+        run: cargo build --release --target ${{ matrix.platform.target }}
+
+      - name: Build (macOS/Windows)
+        if: matrix.platform.os != 'ubuntu-latest'
         run: cargo build --release --target ${{ matrix.platform.target }}
 
       - name: Test binary exists
