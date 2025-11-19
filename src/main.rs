@@ -34,6 +34,10 @@ enum Command {
         /// Optional secret for authentication.
         #[clap(short, long, env = "BORE_SECRET", hide_env_values = true)]
         secret: Option<String>,
+
+        /// Optional API key for authentication (alternative to secret).
+        #[clap(long, env = "BORE_API_KEY", hide_env_values = true)]
+        api_key: Option<String>,
     },
 
     /// Runs the remote proxy server.
@@ -49,6 +53,10 @@ enum Command {
         /// Optional secret for authentication.
         #[clap(short, long, env = "BORE_SECRET", hide_env_values = true)]
         secret: Option<String>,
+
+        /// Optional API validation URL for API key authentication.
+        #[clap(long, env = "BORE_API_VALIDATION_URL")]
+        api_validation_url: Option<String>,
 
         /// IP address to bind to, clients must reach this.
         #[clap(long, default_value = "0.0.0.0")]
@@ -69,14 +77,16 @@ async fn run(command: Command) -> Result<()> {
             to,
             port,
             secret,
+            api_key,
         } => {
-            let client = Client::new(&local_host, local_port, &to, port, secret.as_deref()).await?;
+            let client = Client::new(&local_host, local_port, &to, port, secret.as_deref(), api_key).await?;
             client.listen().await?;
         }
         Command::Server {
             min_port,
             max_port,
             secret,
+            api_validation_url,
             bind_addr,
             bind_tunnels,
         } => {
@@ -86,7 +96,7 @@ async fn run(command: Command) -> Result<()> {
                     .error(ErrorKind::InvalidValue, "port range is empty")
                     .exit();
             }
-            let mut server = Server::new(port_range, secret.as_deref());
+            let mut server = Server::new(port_range, secret.as_deref(), api_validation_url);
             server.set_bind_addr(bind_addr);
             server.set_bind_tunnels(bind_tunnels.unwrap_or(bind_addr));
             server.listen().await?;

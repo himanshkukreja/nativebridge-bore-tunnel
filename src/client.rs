@@ -7,8 +7,15 @@ use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
 use tracing::{error, info, info_span, warn, Instrument};
 use uuid::Uuid;
 
-use crate::auth::Authenticator;
+use crate::auth::{Authenticator, ApiKeyAuthenticator};
 use crate::shared::{ClientMessage, Delimited, ServerMessage, CONTROL_PORT, NETWORK_TIMEOUT};
+
+/// Authentication mode for the client
+enum ClientAuthMode {
+    None,
+    Secret(Authenticator),
+    ApiKey(String), // Stores the API key string
+}
 
 /// State structure for the client.
 pub struct Client {
@@ -27,8 +34,8 @@ pub struct Client {
     /// Port that is publicly available on the remote.
     remote_port: u16,
 
-    /// Optional secret used to authenticate clients.
-    auth: Option<Authenticator>,
+    /// Authentication mode.
+    auth: ClientAuthMode,
 }
 
 impl Client {
@@ -39,11 +46,30 @@ impl Client {
         to: &str,
         port: u16,
         secret: Option<&str>,
+        api_key: Option<String>,
     ) -> Result<Self> {
         let mut stream = Delimited::new(connect_with_timeout(to, CONTROL_PORT).await?);
-        let auth = secret.map(Authenticator::new);
-        if let Some(auth) = &auth {
-            auth.client_handshake(&mut stream).await?;
+
+        // Determine authentication mode
+        let auth = if let Some(key) = api_key.clone() {
+            ClientAuthMode::ApiKey(key)
+        } else if let Some(secret) = secret {
+            ClientAuthMode::Secret(Authenticator::new(secret))
+        } else {
+            ClientAuthMode::None
+        };
+
+        // Perform authentication handshake
+        match &auth {
+            ClientAuthMode::Secret(authenticator) => {
+                authenticator.client_handshake(&mut stream).await?;
+            }
+            ClientAuthMode::ApiKey(key) => {
+                ApiKeyAuthenticator::client_handshake(key, &mut stream).await?;
+            }
+            ClientAuthMode::None => {
+                // No authentication required
+            }
         }
 
         stream.send(ClientMessage::Hello(port)).await?;
@@ -51,7 +77,7 @@ impl Client {
             Some(ServerMessage::Hello(remote_port)) => remote_port,
             Some(ServerMessage::Error(message)) => bail!("server error: {message}"),
             Some(ServerMessage::Challenge(_)) => {
-                bail!("server requires authentication, but no client secret was provided");
+                bail!("server requires authentication, but no client secret or API key was provided");
             }
             Some(_) => bail!("unexpected initial non-hello message"),
             None => bail!("unexpected EOF"),
@@ -105,9 +131,20 @@ impl Client {
     async fn handle_connection(&self, id: Uuid) -> Result<()> {
         let mut remote_conn =
             Delimited::new(connect_with_timeout(&self.to[..], CONTROL_PORT).await?);
-        if let Some(auth) = &self.auth {
-            auth.client_handshake(&mut remote_conn).await?;
+
+        // Perform authentication for each new connection
+        match &self.auth {
+            ClientAuthMode::Secret(auth) => {
+                auth.client_handshake(&mut remote_conn).await?;
+            }
+            ClientAuthMode::ApiKey(key) => {
+                ApiKeyAuthenticator::client_handshake(key, &mut remote_conn).await?;
+            }
+            ClientAuthMode::None => {
+                // No authentication required
+            }
         }
+
         remote_conn.send(ClientMessage::Accept(id)).await?;
         let mut local_conn = connect_with_timeout(&self.local_host, self.local_port).await?;
         let mut parts = remote_conn.into_parts();

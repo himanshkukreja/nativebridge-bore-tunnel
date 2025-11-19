@@ -11,16 +11,23 @@ use tokio::time::{sleep, timeout};
 use tracing::{info, info_span, warn, Instrument};
 use uuid::Uuid;
 
-use crate::auth::Authenticator;
+use crate::auth::{Authenticator, ApiKeyAuthenticator};
 use crate::shared::{ClientMessage, Delimited, ServerMessage, CONTROL_PORT};
+
+/// Authentication mode for the server
+enum AuthMode {
+    None,
+    Secret(Authenticator),
+    ApiKey(ApiKeyAuthenticator),
+}
 
 /// State structure for the server.
 pub struct Server {
     /// Range of TCP ports that can be forwarded.
     port_range: RangeInclusive<u16>,
 
-    /// Optional secret used to authenticate clients.
-    auth: Option<Authenticator>,
+    /// Authentication mode.
+    auth: AuthMode,
 
     /// Concurrent map of IDs to incoming connections.
     conns: Arc<DashMap<Uuid, TcpStream>>,
@@ -34,12 +41,22 @@ pub struct Server {
 
 impl Server {
     /// Create a new server with a specified minimum port number.
-    pub fn new(port_range: RangeInclusive<u16>, secret: Option<&str>) -> Self {
+    pub fn new(port_range: RangeInclusive<u16>, secret: Option<&str>, api_validation_url: Option<String>) -> Self {
         assert!(!port_range.is_empty(), "must provide at least one port");
+
+        // Determine authentication mode
+        let auth = if let Some(url) = api_validation_url {
+            AuthMode::ApiKey(ApiKeyAuthenticator::new(url))
+        } else if let Some(secret) = secret {
+            AuthMode::Secret(Authenticator::new(secret))
+        } else {
+            AuthMode::None
+        };
+
         Server {
             port_range,
             conns: Arc::new(DashMap::new()),
-            auth: secret.map(Authenticator::new),
+            auth,
             bind_addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             bind_tunnels: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
         }
@@ -117,11 +134,25 @@ impl Server {
 
     async fn handle_connection(&self, stream: TcpStream) -> Result<()> {
         let mut stream = Delimited::new(stream);
-        if let Some(auth) = &self.auth {
-            if let Err(err) = auth.server_handshake(&mut stream).await {
-                warn!(%err, "server handshake failed");
-                stream.send(ServerMessage::Error(err.to_string())).await?;
-                return Ok(());
+
+        // Perform authentication based on mode
+        match &self.auth {
+            AuthMode::Secret(auth) => {
+                if let Err(err) = auth.server_handshake(&mut stream).await {
+                    warn!(%err, "server handshake failed");
+                    stream.send(ServerMessage::Error(err.to_string())).await?;
+                    return Ok(());
+                }
+            }
+            AuthMode::ApiKey(auth) => {
+                if let Err(err) = auth.server_handshake(&mut stream).await {
+                    warn!(%err, "API key authentication failed");
+                    stream.send(ServerMessage::Error(err.to_string())).await?;
+                    return Ok(());
+                }
+            }
+            AuthMode::None => {
+                // No authentication required
             }
         }
 
