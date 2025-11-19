@@ -40,19 +40,14 @@ jobs:
         with:
           targets: ${{ matrix.platform.target }}
 
-      - name: Install musl tools and dependencies (Linux)
+      - name: Install musl tools (Linux)
         if: matrix.platform.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev pkg-config libssl-dev build-essential perl make
+          sudo apt-get install -y musl-tools musl-dev
 
-      - name: Build (Linux with vendored OpenSSL)
+      - name: Build (Linux with Rustls - no OpenSSL needed!)
         if: matrix.platform.os == 'ubuntu-latest'
-        env:
-          OPENSSL_STATIC: 1
-          OPENSSL_VENDORED: 1
-          CC_x86_64_unknown_linux_musl: musl-gcc
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: cargo build --release --target ${{ matrix.platform.target }}
 
       - name: Build (macOS/Windows)
